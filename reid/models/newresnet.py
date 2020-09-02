@@ -11,7 +11,7 @@ import torchvision
 
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
-           'resnet152','ft_net','ide', 'idl']
+           'resnet152','ft_net','ide']
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -52,7 +52,7 @@ class ResNet(nn.Module):
         if depth not in ResNet.__factory:
             raise KeyError("Unsupported depth:", depth)
         self.base = ResNet.__factory[depth](pretrained=pretrained)
-        
+
         self.base.avgpool = nn.AdaptiveAvgPool2d((1,1))
         num_ftrs = self.base.fc.in_features
         add_block = []
@@ -61,7 +61,7 @@ class ResNet(nn.Module):
         add_block += [nn.BatchNorm1d(num_bottleneck)]
         add_block += [nn.LeakyReLU(0.1)]
         add_block += [nn.Dropout(p=0.5)]  #default dropout rate 0.5
-        
+
         add_block = nn.Sequential(*add_block)
         add_block.apply(weights_init_kaiming)
         self.base.fc = add_block
@@ -88,7 +88,7 @@ class ft_net(nn.Module):
         super(ft_net,self).__init__()
         self.memorybank = torch.zeros(2, 1 * num_classes, 2048).cuda()
         self.memorybank = Parameter(self.memorybank)
-        
+
         for p in self.parameters():
             p.requires_grad = False
 
@@ -154,7 +154,7 @@ class Discriminator(nn.Module):
         add_block += [nn.BatchNorm1d(500)]
         add_block += [nn.LeakyReLU(0.1)]
         add_block += [nn.Dropout(p=0.5)]  #default dropout rate 0.5
-        
+
         add_block = nn.Sequential(*add_block)
         add_block.apply(weights_init_kaiming)
         self.model = add_block
@@ -177,7 +177,7 @@ def resnet34(**kwargs):
     return ResNet(34, **kwargs)
 
 def resnet50(**kwargs):
-    # Dis = Discriminator()
+    #Dis = Discriminator()
     return ResNet(50, **kwargs)
 
 def resnet101(**kwargs):
@@ -188,6 +188,3 @@ def resnet152(**kwargs):
 
 def ide(**kwargs):
     return ft_net(**kwargs), Discriminator(num_features=2048)
-
-def idl(**kwargs):
-    return ResNet(50, **kwargs)

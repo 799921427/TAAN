@@ -14,7 +14,6 @@ from .utils.meters import AverageMeter
 
 class BaseTrainer(object):
     def __init__(self, model_generator_I, model_discriminator, criterion_z, criterion_I, criterion_D, trainvallabel, a, b, c, u, k):
-        # type: (object, object, object, object, object, object, object, object, object, object, object) -> object
         super(BaseTrainer, self).__init__()
         self.model_generator_I = model_generator_I
         self.model_discriminator = model_discriminator
@@ -27,7 +26,7 @@ class BaseTrainer(object):
         self.c = c
         self.u = u
         self.k = k
-        
+
     def train(self, epoch, data_loader, optimizer_generator_I, optimizer_discriminator, print_freq=1):
         self.model_generator_I.train()
         self.model_discriminator.train()
@@ -38,7 +37,7 @@ class BaseTrainer(object):
         losses_triple = AverageMeter()
         losses_idloss = AverageMeter()
         losses_discriminator = AverageMeter()
-        
+
         end = time.time()
         for i, inputs in enumerate(data_loader):
             data_time.update(time.time() - end)
@@ -46,28 +45,28 @@ class BaseTrainer(object):
             inputs, sub, label = self._parse_data(inputs)
 
             # Calc the loss
-            loss_t, loss_id, loss_discriminator = self._forward(inputs, label, sub)
-            L = self.a * loss_t + self.b * loss_id - self.c * loss_discriminator
+            loss_t, loss_id= self._forward(inputs, label, sub)
+            L = self.a * loss_t + self.b * loss_id
 
             neg_L = - self.u * L
 
-            # if ((epoch * len(data_loader) + i) % self.k == 0):
-            #     optimizer_discriminator.zero_grad()
-            #     neg_L.backward()
-            #     optimizer_discriminator.step()
-            # else:
-            optimizer_generator_I.zero_grad()
-            L.backward()
-            optimizer_generator_I.step()
+            if ((epoch * len(data_loader) + i) % self.k == 0):
+                optimizer_discriminator.zero_grad()
+                neg_L.backward()
+                optimizer_discriminator.step()
+            else:
+                optimizer_generator_I.zero_grad()
+                L.backward()
+                optimizer_generator_I.step()
 
             losses_generator.update(L.data.item(), label.size(0))
             losses_idloss.update(loss_id.item(), label.size(0))
             losses_triple.update(loss_t.item(), label.size(0))
-            losses_discriminator.update(loss_discriminator.item(), label.size(0))
-            
+            #losses_discriminator.update(loss_discriminator.item(), label.size(0))
+
             batch_time.update(time.time() - end)
             end = time.time()
-
+            print(optimizer_generator_I.state_dict()['param_groups'][0]['lr'])
             if (i + 1) % print_freq == 0:
                 print('Epoch: [{}][{}/{}]\t'
                       'Time {:.3f} ({:.3f})\t'
@@ -86,7 +85,6 @@ class BaseTrainer(object):
         return losses_triple.avg, losses_generator.avg
 
     def _parse_data(self, inputs):
-        # type: (object) -> object
         raise NotImplementedError
 
     def _forward(self, inputs, targets):
@@ -105,14 +103,14 @@ class Trainer(BaseTrainer):
         return inputs, sub, label
 
     def _forward(self, inputs, label, sub):
-        outputs, outputs_pool, _, _ = self.model_generator_I(inputs)
+        outputs, outputs_pool, _ = self.model_generator_I(inputs)
 
-        loss_t ,prec = self.criterion_I(outputs_pool, label, sub)
+        loss_t , _ = self.criterion_I(outputs_pool, label, sub)
 
         loss_id = self.criterion_z(outputs, label)
 
-        outputs_discriminator = self.model_discriminator(outputs_pool)
+        #outputs_discriminator = self.model_discriminator(outputs_pool)
 
-        loss_discriminator = self.criterion_D(outputs_discriminator, sub)
+        #loss_discriminator = self.criterion_D(outputs_discriminator, sub)
 
-        return  loss_t, loss_id, loss_discriminator
+        return  loss_t, loss_id

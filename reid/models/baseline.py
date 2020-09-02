@@ -26,16 +26,6 @@ def weights_init_kaiming(m):
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0.0)
 
-def linear_init_kaiming(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in')
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0.0)
-    elif classname.find('BatchNorm') != -1:
-        if m.affine:
-            nn.init.constant_(m.weight, 1.0)
-            nn.init.constant_(m.bias, 0.0)
 
 def weights_init_Classifier(m):
     classname = m.__class__.__name__
@@ -250,8 +240,7 @@ class ResNet(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        # x = torch.flatten(x, 1)
+        x = torch.flatten(x, 1)
         x = self.fc(x)
 
         return x
@@ -416,13 +405,12 @@ def resnet50(pretrained=False, progress=True, **kwargs):
 
 class Baseline(nn.Module):
     in_planes = 2048
-    def __init__(self, num_classes, num_features, attention_mode=1, last_stride=2, model_path='/home/zzz/resnet50-19c8e357.pth'):
+    def __init__(self, num_classes, num_features, attention_mode = 1, last_stride=2, model_path='/home/zzz/resnet50-19c8e357.pth'):
         super(Baseline, self).__init__()
 
         self.memorybank = torch.zeros(2, 1 * num_classes, 2048).cuda()
         self.memorybank = Parameter(self.memorybank)
 
-        self.attention_mode = attention_mode
         for p in self.parameters():
             p.requires_grad = False
 
@@ -432,19 +420,20 @@ class Baseline(nn.Module):
         #self.base = torchvision.models.resnet50(pretrained=True)
         self.base = resnet50(pretrained= True)
         self.gap = nn.AdaptiveAvgPool2d(1)
+
+        self.attention_mode = attention_mode
+        self.num_features = num_features
         self.num_classes = num_classes
-
-        # attetion module
-        self.attention_module = AttentionModule(num_features, self.num_classes, attention_mode=self.attention_mode)
-
         self.in_planes = num_features
 
-        ## use a neck to produce triplet feature and score 
+        ## use a neck to produce triplet feature and score
         self.bottleneck = nn.BatchNorm1d(self.in_planes)
-
+        self.bottleneck.bias.requires_grad_(False)
         self.Classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
         self.Classifier.apply(weights_init_Classifier)
 
+        # attention module
+        self.attention_module = AttentionModule(num_features, self.num_classes, attention_mode=self.attention_mode)
 
         tri_bottleneck = []
         tri_bottleneck += [nn.Linear(2048, num_features)]
@@ -452,7 +441,7 @@ class Baseline(nn.Module):
         tri_bottleneck = nn.Sequential(*tri_bottleneck)
         tri_bottleneck = tri_bottleneck.apply(weights_init_kaiming)
         self.tri_bottleneck = tri_bottleneck
-        
+
 
         classifier = []
         classifier += [nn.Linear(num_features, num_features // 2)]
@@ -464,62 +453,48 @@ class Baseline(nn.Module):
         self.classifier = classifier
         self.bottleneck.apply(weights_init_kaiming)
         self.classifier.apply(weights_init_classifier)
-        # if not self.attention_mode == 0:
-        #     self.attention_module.apply(weights_init_kaiming)
-
 
     def forward(self, x):
-        # print(x.size())
-        # x = self.base(x)
         feature_map = []
         for name, module in self.base._modules.items():
             if name == 'avgpool':
                 break
-            # print(x)
             x = module(x)
             if name == 'layer1':
+                #print('layer1')
+                #print(x.size())
                 feature_map.append(x)
             elif name == 'layer2':
+                #print('layer2')
+                #print(x.size())
                 feature_map.append(x)
             elif name == 'layer3':
+                #print('layer3')
+                #print(x.size())
                 feature_map.append(x)
             elif name == 'layer4':
+                #print('layer4')
+                #print(x.size())
                 feature_map.append(x)
 
         g = self.gap(x)  # (b, 2048, 1, 1)
-        ## use maxpool instead
-        #global_feat = F.max_pool2d(x, x.size()[2:])
+        #print(g.size())
         global_feat = g.view(g.shape[0], -1)
-        att_feats = []
+        #print(global_feat.size())
+
         g, cls_att, att_feats = self.attention_module(feature_map, g)
-
         g_att = g
-        ##############################
-        #        original forward
 
-        # tri_feat = self.tri_bottleneck(global_feat)
-        # cls_score = self.classifier(tri_feat)
-        # if self.training:
-        #     return cls_score, tri_feat
-        # else:
-        #     return global_feat, tri_feat
-
-        ############################## 
-        #        baseline forward
-        feat1 = self.bottleneck(global_feat) 
-
+        feat1 = self.bottleneck(global_feat)
         cls_score = self.classifier(feat1)
 
-        # print(self.attention_mode)
-        # print(cls_score)
-        if not self.attention_mode == 0 :
+        if not self.attention_mode == 0:
             cls_score = (cls_score + cls_att) / 2
-            # print(cls_score)
+
         if self.training:
-            return cls_score, global_feat, att_feats, g_att,
+            return cls_score, feat1.view(feat1.shape[0], -1), global_feat, att_feats, g_att
         else:
             return global_feat, feat1
-
 
 
 class Discriminator(nn.Module):
@@ -551,15 +526,8 @@ class Discriminator(nn.Module):
         x = self.classifier(x)
         return x
 
+def tri_pipe(**kwargs):
+    return Baseline(**kwargs)
 
 def baseline(**kwargs):
-    return Baseline(**kwargs), Discriminator(num_features=2048)
-
-def baseline_wo_D(**kwargs):
-    return Baseline(**kwargs)
-
-def two_pipe(**kwargs):
-    return Baseline(**kwargs)
-
-def two_pipe_wD(**kwargs):
     return Baseline(**kwargs), Discriminator(num_features=2048)

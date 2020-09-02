@@ -68,8 +68,19 @@ class LinearAttentionBlock(nn.Module):
         self.bn = nn.BatchNorm2d(1)
     def forward(self, l, g):
         N, C, W, H = l.size()
-        # print(N,C,W,H)
-        c = self.bn(self.op(l+g)) # batch_sizex1xWxH 
+        #print(N,C,W,H)
+        c = self.bn(self.op(l+g)) # batch_sizex1xWxH
+        #print("l:")
+        #print(l.size())
+        #print(l)
+        #print("g:")
+        #print(g.size())
+        #print(g)
+        #print("add:")
+        #print((l+g).size())
+        #print(l+g)
+        #print("c:")
+        #print(c.size())
         # pdb.set_trace()
         if self.normalize_attn:
             a = F.softmax(c.view(N,1,-1), dim=2).view(N,1,W,H)
@@ -81,12 +92,12 @@ class LinearAttentionBlock(nn.Module):
             # print(g.size())
             return c.view(N,1,W, H), g
         else:
-                
+
             if self.normalize_attn:
                 # g = g.view(N,C,-1).sum(dim=2) # batch_sizexC
                 g = g.view(N,C,-1).sum(dim=2)/W/H # batch_sizexC
                 # print(g.size())
-                
+
             else:
                 g = F.adaptive_avg_pool2d(g, (1,1)).view(N,C)
             # print(g.size())

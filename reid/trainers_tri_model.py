@@ -14,7 +14,7 @@ from .utils.meters import AverageMeter
 
 
 class BaseTrainer(object):
-    def __init__(self, model_s, model_ir, model_t, criterion_z, criterion_z_s, criterion_I, criterion_att, trainvallabel, a, b, c, u, k):
+    def __init__(self, model_s, model_ir, model_t, criterion_z, criterion_z_s, criterion_I, criterion_att, criterion_t, trainvallabel, a, b, c, u, k):
         super(BaseTrainer, self).__init__()
         self.model_s = model_s
         self.model_t = model_t
@@ -23,6 +23,7 @@ class BaseTrainer(object):
         self.criterion_z_s = criterion_z_s
         self.criterion_I = criterion_I
         self.criterion_att = criterion_att
+        self.criterion_t = criterion_t
         self.trainvallabel = trainvallabel
         # self.netG_A = networks.define_G(3,3,64,'resnet_9blocks','instance','store_false','normal',0.02,'0')
         # self.netG_B = networks.define_G(3,3,64,'resnet_9blocks','instance','store_false','normal',0.02,'0')
@@ -31,21 +32,22 @@ class BaseTrainer(object):
         self.c = c
         self.u = u
         self.k = k
-        
+
     def train(self, epoch, data_loader, optimizer_generator_I, print_freq=1):
         self.model_t.train()
         self.model_s.train()
-
+        self.model_ir.train()
         batch_time = AverageMeter()
         data_time = AverageMeter()
         losses_generator = AverageMeter()
         losses_triple = AverageMeter()
+        losses_triple_s = AverageMeter()
         losses_idloss = AverageMeter()
         losses_idloss_s = AverageMeter()
         losses_idloss_ir = AverageMeter()
         losses_attention_s = AverageMeter()
         losses_attention_ir = AverageMeter()
-        
+
         end = time.time()
         for i, inputs in enumerate(data_loader):
             data_time.update(time.time() - end)
@@ -53,8 +55,11 @@ class BaseTrainer(object):
             inputs, sub, label = self._parse_data(inputs)
 
             # Calc the loss
-            loss_t, loss_id, loss_id_s, loss_id_ir, loss_attention_s, loss_attention_ir = self._forward(inputs, label, sub)
-            L = self.a * loss_t + self.b * loss_id + loss_id_s + loss_id_ir + 1.0 * loss_attention_s + 0.9 * loss_attention_ir
+            loss_t, loss_id, loss_id_s, loss_id_ir, loss_attention_s, loss_attention_ir, loss_t_s = self._forward(inputs, label, sub)
+            L = self.a * loss_t + self.b * loss_id + loss_id_s + loss_id_ir + self.c * loss_attention_s + self.u * loss_attention_ir + loss_t_s
+
+            # print(self.c)
+            # print(self.u)
             # L = loss_attention
 
             neg_L = - self.u * L
@@ -72,7 +77,7 @@ class BaseTrainer(object):
             losses_idloss.update(loss_id.item(), label.size(0))
             losses_idloss_s.update(loss_id_s.item(), label.size(0))
             losses_idloss_ir.update(loss_id_ir.item(), label.size(0))
-
+            losses_triple_s.update(loss_t_s.item(), label.size(0))
             losses_triple.update(loss_t.item(), label.size(0))
             losses_attention_s.update(loss_attention_s.item(), label.size(0))
             losses_attention_ir.update(loss_attention_ir.item(), label.size(0))
@@ -89,6 +94,7 @@ class BaseTrainer(object):
                       'IDE Loss S {:.3f} ({:.3f})\t'
                       'IDE Loss IR {:.3f} ({:.3f})\t'
                       'Triple Loss {:.3f} ({:.3f})\t'
+                      'Single Modality Triple Loss {:.3f} ({:.3f})\t'
                       'Att Loss S {:.9f} ({:.9f})\t'
                       'Att Loss IR {:.9f} ({:.9f})'
                       .format(epoch, i + 1, len(data_loader),
@@ -99,6 +105,7 @@ class BaseTrainer(object):
                               losses_idloss_s.val, losses_idloss_s.avg,
                               losses_idloss_ir.val, losses_idloss_ir.avg,
                               losses_triple.val, losses_triple.avg,
+                              losses_triple_s.val, losses_triple_s.avg,
                               losses_attention_s.val, losses_attention_s.avg,
                               losses_attention_ir.val, losses_attention_ir.avg))
         return losses_triple.avg, losses_generator.avg, losses_attention_s.avg
@@ -142,6 +149,10 @@ class Trainer(BaseTrainer):
         outputs_ir, outputs_pool_ir, att_feats_ir, _ = self.model_ir(ir_inputs)
         outputs_s, outputs_pool_s, att_feats_s, _ = self.model_s(rgb_inputs)
 
+        loss_t_s, _ = self.criterion_t(outputs_pool_s, att_label)
+        loss_t_ir, _ = self.criterion_t(outputs_pool_ir, att_label)
+        loss_t_s += loss_t_ir
+
         loss_id_s = self.criterion_z(outputs_s, att_label)
         loss_id_ir = self.criterion_z(outputs_ir, att_label)
         #
@@ -169,6 +180,7 @@ class Trainer(BaseTrainer):
         # # loss_discriminator = self.criterion_D(outputs_discriminator, sub)
         #
         # loss_att = loss_att * 10
+        # loss_t_s = 0
         # loss_id = 0.5 * loss_id
-        return  loss_t, loss_id, loss_id_s, loss_id_ir, loss_att_s, loss_att_ir
+        return  loss_t, loss_id, loss_id_s, loss_id_ir, loss_att_s, loss_att_ir, loss_t_s
 

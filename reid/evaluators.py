@@ -52,7 +52,7 @@ def pairwise_distance(features1, features2, labels1=None, labels2=None, fnames1=
     x = x.view(m, -1)
     y = y.view(n, -1)
 
-    # normalize 
+    # normalize
     x = torch.nn.functional.normalize(x, dim=1, p=2)
     y = torch.nn.functional.normalize(y, dim=1, p=2)
 
@@ -93,10 +93,10 @@ def evaluate_all(distmat, labels1, labels2, fnames1, fnames2, flag, cmc_topk=(1,
         print('  top-{:<4}{:12.2%}'
               .format(k,cmc_scores['RegDB'][k - 1])
               )
- 
+
     # Use the allshots cmc top-1 score for validation criterion
     return cmc_scores['RegDB'][0]
-   
+
     #return mAP
 
 class Evaluator(object):
@@ -108,4 +108,5 @@ class Evaluator(object):
         features1, labels1, fnames1 = extract_features(self.model, data_loader1)
         features2, labels2, fnames2 = extract_features(self.model, data_loader2)
         distmat = pairwise_distance(features1, features2, labels1, labels2, fnames1, fnames2, metric=metric)
+        print(distmat)
         return evaluate_all(distmat, labels1, labels2, fnames1, fnames2, flag)

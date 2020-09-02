@@ -33,6 +33,11 @@ def save_checkpoint_s(state, is_best, epoch, dirname, fpath='s_checkpoint.pth.ta
     if is_best:
         shutil.copyfile(dirname+'/'+fpath, dirname+'/'+'s_model_best.pth.tar')
 
+def save_checkpoint_ir(state, is_best, epoch, dirname, fpath='ir_checkpoint.pth.tar'):
+    mkdir_if_missing(osp.dirname(dirname))
+    torch.save(state, osp.join(dirname,fpath))
+    if is_best:
+        shutil.copyfile(dirname+'/'+fpath, dirname+'/'+'ir_model_best.pth.tar')
 
 def load_checkpoint(fpath):
     if osp.isfile(fpath):

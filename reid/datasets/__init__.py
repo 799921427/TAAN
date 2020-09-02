@@ -7,7 +7,6 @@ from .dukemtmc import DukeMTMC
 from .market1501 import Market1501
 from .viper import VIPeR
 from .sysu import SYSU
-from .sysu_id import SYSU_ID
 from .RegDB import RegDB
 
 
@@ -18,7 +17,6 @@ __factory = {
     'market1501': Market1501,
     'dukemtmc': DukeMTMC,
     'sysu': SYSU,
-    'sysu_id':SYSU_ID,
     'RegDB': RegDB,
 }
 

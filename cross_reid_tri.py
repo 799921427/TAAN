@@ -9,20 +9,22 @@ from torch import nn
 from torch.backends import cudnn
 from torch.utils.data import DataLoader
 import torch.optim as optim
+from ranger import Ranger
 from torch.optim import lr_scheduler
 from reid import datasets
 from reid import models
 from reid.dist_metric import DistanceMetric
 from reid.loss.CrossTriplet import CrossTriplet as TripletLoss
-from reid.trainers_tri_model import Trainer
+from reid.loss.triplet import TripletLoss as Triplet
+from reid.tri_trainers import Trainer
 from reid.evaluators import Evaluator
 from reid.utils.data import transforms as T
 from reid.utils.data.preprocessor import Preprocessor
 from reid.utils.data.sampler import CamRandomIdentitySampler as RandomIdentitySampler
 from reid.utils.data.sampler import CamSampler
 from reid.utils.logging import Logger
-from reid.utils.serialization import load_checkpoint, save_checkpoint
-from utlis import RandomErasing, WarmupMultiStepLR,CrossEntropyLabelSmooth
+from reid.utils.serialization import load_checkpoint, save_checkpoint, save_checkpoint_s, save_checkpoint_ir
+from utlis import RandomErasing, WarmupMultiStepLR, CrossEntropyLabelSmooth, Rank_loss, Circle_Rank_loss
 
 
 
@@ -43,7 +45,7 @@ def get_data(name, split_id, data_dir, height, width, batch_size, num_instances,
 
     train_transformer = T.Compose([
         T.Resize((height, width)),
-        T.RandomHorizontalFlip(),
+        T.RandomHorizontalFlip(p=flip_prob),
         T.Pad(padding),
         T.RandomCrop((height, width)),
         T.ToTensor(),
@@ -86,39 +88,38 @@ def get_data(name, split_id, data_dir, height, width, batch_size, num_instances,
 
     train_loader = DataLoader(
         Preprocessor(train_set, root=dataset.images_dir,
-                     transform=train_transformer),
+            transform=train_transformer),
         batch_size=batch_size, num_workers=workers,
         sampler=RandomIdentitySampler(train_set, num_instances),
         pin_memory=True, drop_last=True)
 
     query_loader_rgb = DataLoader(
         Preprocessor(list(set(dataset.query)),
-                     root=dataset.images_dir, transform=test_transformer),
+            root=dataset.images_dir, transform=test_transformer),
         batch_size=32, num_workers=workers,
         sampler=CamSampler(list(set(dataset.query)), [0,1,3,4]),
         shuffle=False, pin_memory=True)
 
     gallery_loader_rgb = DataLoader(
         Preprocessor(list(set(dataset.gallery)),
-                     root=dataset.images_dir, transform=test_transformer),
+            root=dataset.images_dir, transform=test_transformer),
         batch_size=32, num_workers=workers,
         sampler=CamSampler(list(set(dataset.gallery)), [0,1,3,4], 4),
         shuffle=False, pin_memory=True)
 
     query_loader_ir = DataLoader(
         Preprocessor(list(set(dataset.query)),
-                     root=dataset.images_dir, transform=test_transformer),
+            root=dataset.images_dir, transform=test_transformer),
         batch_size=32, num_workers=workers,
         sampler=CamSampler(list(set(dataset.query)), [2,5]),
         shuffle=False, pin_memory=True)
 
     gallery_loader_ir = DataLoader(
         Preprocessor(list(set(dataset.gallery)),
-                     root=dataset.images_dir, transform=test_transformer),
+            root=dataset.images_dir, transform=test_transformer),
         batch_size=32, num_workers=workers,
         sampler=CamSampler(list(set(dataset.gallery)), [2,5], 2),
         shuffle=False, pin_memory=True)
-
 
     return dataset, num_classes, train_loader, trainvallabel, val_loader, query_loader, gallery_loader, query_loader_rgb, gallery_loader_rgb, query_loader_ir, gallery_loader_ir
 
@@ -133,163 +134,178 @@ def main(args):
 
     if args.height is None or args.width is None:
         args.height, args.width = (144, 56) if args.arch == 'inception' else (256, 128)
-    dataset, num_classes, train_loader, trainvallabel, val_loader, query_loader, gallery_loader = \
+    dataset, num_classes, train_loader, trainvallabel, val_loader, query_loader, gallery_loader, query_loader_rgb, gallery_loader_rgb, query_loader_ir, gallery_loader_ir = \
         get_data(args.dataset, args.split, args.data_dir, args.height,
             args.width, args.batch_size, args.num_instances, args.workers,
             args.combine_trainval, args.flip_prob, args.padding, args.re_prob)
-    print(num_classes)
-    # model_s, model_t, model_discriminator = models.create(args.arch, num_classes=num_classes, num_features=args.features)
     model_t = models.create(args.arch, num_classes=num_classes, num_features=args.features, attention_mode=args.att_mode)
     model_s = models.create(args.arch, num_classes=num_classes, num_features=args.features, attention_mode=args.att_mode)
-    model_ir = models.create(args.arch, num_classes=num_classes, num_features=args.features,
-                            attention_mode=args.att_mode)
-
-    # load source network
-    # checkpoint_s = load_checkpoint('/home/fan/cross_reid/source_net/model_best.pth.tar')
-    #
-    # model_dict = model_s.state_dict()
-    # state_dict = {k:v for k,v in checkpoint_s.items() if k in model_dict.keys()}
-    # model_dict.update(state_dict)
-
-    # print(model_s)
-    # print(checkpoint_s['model'])
-    # print(model_dict.keys())
-    # model_s.load_state_dict(model_dict)
-    # print(model_s)
+    model_ir = models.create(args.arch, num_classes=num_classes, num_features=args.features, attention_mode=args.att_mode)
+#    print(model)
     USE_CUDA = torch.cuda.is_available()
     device = torch.device("cuda:0" if USE_CUDA else "cpu")
-    model_s = nn.DataParallel(model_s, device_ids=[0, 2, 3])
-    model_s.to(device)
-    # model_s = model_s.cuda()
-    model_t = nn.DataParallel(model_t, device_ids=[0, 2, 3])
+    model_t = nn.DataParallel(model_t, device_ids=[0,1,2])
     model_t.to(device)
-
-    model_ir = nn.DataParallel(model_ir, device_ids=[0, 2, 3])
+    model_s = nn.DataParallel(model_s, device_ids=[0,1,2])
+    model_s.to(device)
+    model_ir = nn.DataParallel(model_ir, device_ids=[0,1,2])
     model_ir.to(device)
-    # model_discriminator = model_discriminator.cuda()
+    print(num_classes)
+    #model = model.cuda()
+    #model_discriminator = model_discriminator.cuda()
+    #model_discriminator = nn.DataParallel(model_discriminator, device_ids=[0,1,2])
+    #model_discriminator.to(device)
 
     evaluator = Evaluator(model_t)
     metric = DistanceMetric(algorithm=args.dist_metric)
+    evaluator_s = Evaluator(model_s)
+    metric_s = DistanceMetric(algorithm=args.dist_metric)
+    evaluator_ir = Evaluator(model_ir)
+    metric_ir = DistanceMetric(algorithm=args.dist_metric)
 
     start_epoch = 0
     if args.resume:
         checkpoint = load_checkpoint(args.resume)
-        model_t.load_state_dict(checkpoint['model'])
-        # model_discriminator.load_state_dict(checkpoint['model_discriminator'])
+        model.load_state_dict(checkpoint['model'])
+        model_discriminator.load_state_dict(checkpoint['model_discriminator'])
         start_epoch = checkpoint['epoch']
         print("=> Start epoch {}".format(start_epoch))
 
     if args.evaluate:
-        metric.train(model_t, train_loader)
+        metric.train(model, train_loader)
         evaluator.evaluate(query_loader, gallery_loader, dataset.query, dataset.gallery)
         exit()
 
     current_margin = args.margin
-    criterion_z_s = CrossEntropyLabelSmooth(num_classes = num_classes, epsilon=0.5).cuda()
+    #criterion_z = nn.CrossEntropyLoss().cuda()
+
+    criterion_z = CrossEntropyLabelSmooth(num_classes= num_classes, epsilon=args.epsilon).cuda()
     criterion_att = nn.MSELoss().cuda()
-    criterion_z = CrossEntropyLabelSmooth(num_classes = num_classes, epsilon=0.5).cuda()
-    criterion_I = TripletLoss(margin = current_margin).cuda()
-    # criterion_D = nn.CrossEntropyLoss().cuda()
+    #criterion_I = TripletLoss(margin= current_margin).cuda()
+    #criterion_I = Circle_Rank_loss(margin_1=args.margin_1, margin_2=args.margin_2, alpha_1=args.alpha_1, alpha_2=args.alpha_2).cuda()
+    criterion_I = Rank_loss(margin_1= args.margin_1, margin_2 =args.margin_2, alpha_1 =args.alpha_1, alpha_2= args.alpha_2).cuda()
+    criterion_t = Triplet(margin=current_margin).cuda()
 
     print(args)
 
     if args.arch == 'ide':
-        ignored_params = list(map(id, model_t.model.fc.parameters() )) + list(map(id, model_t.classifier.parameters() ))
+        ignored_params = list(map(id, model.model.fc.parameters() )) + list(map(id, model.classifier.parameters() ))
     else:
         ignored_params = list(map(id, model_t.module.classifier.parameters())) + list(map(id, model_t.module.attention_module.parameters()))
-        ignored_params_s = list(map(id, model_s.module.classifier.parameters())) + list(
-            map(id, model_s.module.attention_module.parameters()))
-        ignored_params_ir = list(map(id, model_ir.module.classifier.parameters())) + list(
-            map(id, model_ir.module.attention_module.parameters()))
+        ignored_params_s = list(map(id, model_s.module.classifier.parameters())) + list(map(id, model_s.module.attention_module.parameters()))
+        ignored_params_ir = list(map(id, model_ir.module.classifier.parameters())) + list(map(id, model_ir.module.attention_module.parameters()))
 
     base_params = filter(lambda p: id(p) not in ignored_params, model_t.parameters())
     base_params_s = filter(lambda p: id(p) not in ignored_params_s, model_s.parameters())
     base_params_ir = filter(lambda p: id(p) not in ignored_params_ir, model_ir.parameters())
 
+
     if args.use_adam:
         optimizer_ft = torch.optim.Adam([
+        #print("Ranger")
+        #optimizer_ft = Ranger([
             {'params': filter(lambda p: p.requires_grad,base_params), 'lr': args.lr},
-            {'params': filter(lambda p: p.requires_grad, base_params_s), 'lr': args.lr},
-            {'params': filter(lambda p: p.requires_grad, base_params_ir), 'lr': args.lr},
-            {'params': model_s.module.classifier.parameters(), 'lr': args.lr},
-            {'params': model_s.module.attention_module.parameters(), 'lr': args.lr},
+            {'params': filter(lambda p: p.requires_grad,base_params_s), 'lr':args.lr},
+            {'params': filter(lambda p: p.requires_grad,base_params_ir), 'lr':args.lr},
             {'params': model_t.module.classifier.parameters(), 'lr': args.lr},
             {'params': model_t.module.attention_module.parameters(), 'lr': args.lr},
+            {'params': model_s.module.classifier.parameters(), 'lr': args.lr},
+            {'params': model_s.module.attention_module.parameters(), 'lr': args.lr},
             {'params': model_ir.module.classifier.parameters(), 'lr': args.lr},
             {'params': model_ir.module.attention_module.parameters(), 'lr': args.lr},
             ],
             weight_decay=5e-4)
 
-        # optimizer_discriminator = torch.optim.Adam([
-        #     {'params': model_discriminator.model.parameters(), 'lr': args.lr},
-        #     {'params': model_discriminator.classifier.parameters(), 'lr': args.lr}
-        #     ],
-        #     weight_decay=5e-4)
+        #optimizer_discriminator = torch.optim.Adam([
+        #    {'params': model_discriminator.module.model.parameters(), 'lr': args.lr},
+        #    {'params': model_discriminator.module.classifier.parameters(), 'lr': args.lr}
+        #    ],
+        #    weight_decay=5e-4)
 
 
     else:
         optimizer_ft = torch.optim.SGD([
-            {'params': filter(lambda p: p.requires_grad, base_params), 'lr': args.lr},
-            {'params': filter(lambda p: p.requires_grad, base_params_s), 'lr': args.lr},
-            {'params': model_s.classifier.parameters(), 'lr': args.lr},
-            {'params': model_s.attention_module.parameters(), 'lr': args.lr},
-            {'params': model_t.classifier.parameters(), 'lr': args.lr},
-            {'params': model_t.attention_module.parameters(), 'lr': args.lr},
+             {'params': filter(lambda p: p.requires_grad,base_params), 'lr': args.lr},
+             {'params': model.classifier.parameters(), 'lr': args.lr},
             ],
             momentum=0.9,
             weight_decay=5e-4,
             nesterov=True)
-        # optimizer_discriminator = torch.optim.SGD([
-        #      {'params': model_discriminator.model.parameters(), 'lr': args.lr},
-        #      {'params': model_discriminator.classifier.parameters(), 'lr': args.lr},
-        #     ],
-        #     momentum=0.9,
-        #     weight_decay=5e-4,
-        #     nesterov=True)
-
-    scheduler = WarmupMultiStepLR(optimizer_ft, args.mile_stone, args.gamma, args.warmup_factor,
+        optimizer_discriminator = torch.optim.SGD([
+             {'params': model_discriminator.model.parameters(), 'lr': args.lr},
+             {'params': model_discriminator.classifier.parameters(), 'lr': args.lr},
+            ],
+            momentum=0.9,
+            weight_decay=5e-4,
+            nesterov=True)
+    print(args.warmup_left)
+    mile_stone = []
+    mile_stone.append(int(args.warmup_left))
+    mile_stone.append(int(args.warmup_right))
+    print(mile_stone)
+    scheduler = WarmupMultiStepLR(optimizer_ft, mile_stone, args.gamma, args.warmup_factor,
                                           args.warmup_iters, args.warmup_methods)
 
-    trainer = Trainer(model_s, model_ir, model_t, criterion_z, criterion_z_s, criterion_I ,criterion_att, trainvallabel, 1, 1 ,0.15 , 0.05, 5)
+    trainer = Trainer(model_t, model_s, model_ir, criterion_z, criterion_I, criterion_att, criterion_t, trainvallabel, 1, 1 ,args.rgb_w, args.ir_w, 1000)
 
     flag = 1
     best_top1 = -1
+    best_top1_s = -1
+    best_top1_ir = -1
     # Start training
     for epoch in range(start_epoch, args.epochs):
         scheduler.step()
-        triple_loss, tot_loss, att_loss = trainer.train(epoch, train_loader, optimizer_ft)
+        triple_loss, tot_loss = trainer.train(epoch, train_loader, optimizer_ft)
 
         save_checkpoint({
             'model': model_t.module.state_dict(),
+            #'model_discriminator': model_discriminator.module.state_dict(),
             'epoch': epoch + 1,
             'best_top1': best_top1,
         }, False, epoch, args.logs_dir, fpath='checkpoint.pth.tar')
 
-        # if epoch < 200:
-        #     continue
+        if epoch < 1:
+            continue
         if not epoch % 10 ==0:
             continue
 
 
         top1 = evaluator.evaluate(query_loader, gallery_loader, dataset.query, dataset.gallery, metric)
-
+        top1_s = evaluator_s.evaluate(query_loader_rgb, gallery_loader_rgb, dataset.query, dataset.gallery, metric_s)
+        top1_ir = evaluator_ir.evaluate(query_loader_ir, gallery_loader_ir, dataset.query, dataset.gallery, metric_ir)
         is_best = top1 > best_top1
         best_top1 = max(top1, best_top1)
         save_checkpoint({
             'model': model_t.module.state_dict(),
-            # 'model_discriminator': model_discriminator.state_dict(),
+            #'model_discriminator': model_discriminator.module.state_dict(),
             'epoch': epoch + 1,
             'best_top1': best_top1,
         }, is_best, epoch, args.logs_dir, fpath='checkpoint.pth.tar')
 
-    print('Test with best model:')
-    print('\n * Finished epoch {:3d}  top1: {:5.1%}  best: {:5.1%}{}\n'.
-              format(epoch, top1, best_top1, ' *' if is_best else ''))
+        is_best_s = top1_s > best_top1_s
+        best_top1_s = max(top1_s, best_top1_s)
+        save_checkpoint_s({
+            'model': model_s.module.state_dict(),
+            'epoch': epoch+1,
+            'best_top1': best_top1,
+        }, is_best, epoch, args.logs_dir, fpath='s_checkpoint.pth.tar')
 
-    checkpoint = load_checkpoint(osp.join(args.logs_dir,'model_best.pth.tar'))
-    model_t.load_state_dict(checkpoint['model'])
-    metric.train(model_t, train_loader)
-    evaluator.evaluate(query_loader, gallery_loader, dataset.query, dataset.gallery, metric)
+        is_best_ir = top1_ir > best_top1_ir
+        best_top1_ir = max(top1_ir, best_top1_ir)
+        save_checkpoint_ir({
+            'model': model_ir.module.state_dict(),
+            'epoch': epoch+1,
+            'best_top1': best_top1,
+        }, is_best, epoch, args.logs_dir, fpath='ir_checkpoint.pth.tar')
+
+    #print('Test with best model:')
+    #print('\n * Finished epoch {:3d}  top1: {:5.1%}  best: {:5.1%}{}\n'.
+    #          format(epoch, top1, best_top1, ' *' if is_best else ''))
+
+    #checkpoint = load_checkpoint(osp.join(args.logs_dir,'model_best.pth.tar'))
+    #model.load_state_dict(checkpoint['model'])
+    #metric.train(model, train_loader)
+    #evaluator.evaluate(query_loader, gallery_loader, dataset.query, dataset.gallery, metric)
     print(args)
 
 
@@ -331,6 +347,26 @@ if __name__ == '__main__':
     # loss
     parser.add_argument('--margin', type=float, default=0.5,
                         help="margin of the triplet loss, default: 0.5")
+    parser.add_argument('--margin_1', type=float, default=0.9,
+                        help="margin_1 of the triplet loss, default: 0.5")
+    parser.add_argument('--margin_2', type=float, default=1.0,
+                        help="margin_1 of the triplet loss, default: 0.5")
+    parser.add_argument('--alpha_1', type=float, default=2.2,
+            help="alpha_1 of the triplet loss, default: 0.5")
+    parser.add_argument('--alpha_2', type=float, default=2.0,
+                        help="alpha_2 of the triplet loss, default: 0.5")
+    parser.add_argument('--epsilon', type=float, default=0.3,
+            help="epsilon of label smooth parameters")
+
+    # attention mode
+    parser.add_argument('--att_mode', type=int, default=1)
+
+    # weight of rgb and ir
+    parser.add_argument('--rgb_w', type=float, default=0.5,
+                        help='weight of rgb branch loss')
+    parser.add_argument('--ir_w', type=float, default=0.9,
+                        help='weight of ir branch loss')
+
     # optimizer
     parser.add_argument('--lr', type=float, default=1e-4,
                          help="learning rate of all parameters")
@@ -340,17 +376,14 @@ if __name__ == '__main__':
     parser.add_argument('--gamma', type=float, default = 0.1,
                     help="gamma for learning rate decay")
 
-    #
-    # parser.add_argument('--mile_stone', type=list, default=[300,400])
+    parser.add_argument('--warmup_left', type=str, default = '140')
+    parser.add_argument('--warmup_right', type=str, default = '200')
+    parser.add_argument('--mile_stone', type=list, default=[120, 1000])
 
-    parser.add_argument('--mile_stone', type=list, default=[500,700])
-
-    parser.add_argument('--warmup_iters', type=int, default = 100)
+    parser.add_argument('--warmup_iters', type=int, default = 5)
     parser.add_argument('--warmup_methods', type=str, default = 'linear', choices=('linear', 'constant'))
     parser.add_argument('--warmup_factor', type=float, default = 0.01 )
 
-    # att_mode
-    parser.add_argument('--att_mode', type=int, default=1)
     # training configs
     parser.add_argument('--resume', type=str, default='', metavar='PATH')
     parser.add_argument('--evaluate', action='store_true',
@@ -369,5 +402,6 @@ if __name__ == '__main__':
                         default=osp.join(working_dir, 'data'))
     parser.add_argument('--logs-dir', type=str, metavar='PATH',
                         default=osp.join(working_dir, 'logs'))
+
 
     main(parser.parse_args())

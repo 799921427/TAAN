@@ -1,0 +1,9 @@
+/home/zzz/zdm/TAAN/data/sysu
+SYSU dataset loaded
+  subset               |   # ids  | # images
+  ---------------------+----------+---------
+  train                |      295 |    30105
+  val                  |      100 |     4062
+  trainval             |      395 |    34167
+395
+Namespace(arch='two_pipe', att_mode=1, batch_size=64, combine_trainval=True, data_dir='/home/zzz/zdm/TAAN/data', dataset='sysu', dist_metric='euclidean', dropout=0, epochs=1000, evaluate=False, features=2048, flip_prob=0.5, gamma=0.1, height=256, ir_w=1, logs_dir='/home/zzz/zdm/TAAN/logs', lr=0.0001, margin=2.4, mile_stone=[400, 550], num_instances=4, padding=0, re_prob=0.0, resume='', rgb_w=0.0, seed=1, split=0, start_save=0, use_adam=True, warmup_factor=0.01, warmup_iters=100, warmup_methods='linear', weight_decay=0.0005, width=128, workers=4)

@@ -1,12 +1,9 @@
 from __future__ import absolute_import
 
 from .inception import *
-from .networks import *
 from .newresnet import *
 from .baseline import baseline
-from .baseline import baseline_wo_D
-from .baseline import two_pipe
-from .baseline import two_pipe_wD
+from .baseline import tri_pipe
 # from .resnet import *
 
 
@@ -17,11 +14,9 @@ __factory = {
     'resnet50': resnet50,
     'resnet101': resnet101,
     'resnet152': resnet152,
-    'baseline': baseline, 
+    'baseline': baseline,
     'ide':ide,
-    'baseline_wo_D':baseline_wo_D,
-    'two_pipe':two_pipe,
-    'two_pipe_wD':two_pipe_wD,
+    'tri_pipe': tri_pipe,
 }
 
 

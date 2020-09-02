@@ -4,12 +4,13 @@ import numpy
 from ..utils.data import Dataset
 from ..utils.osutils import mkdir_if_missing
 from ..utils.serialization import write_json
+import time
 
 
 class RegDB(Dataset):
-    def __init__(self, root, split_id=0, num_val=100, download=True):
+    def __init__(self, root, split_id=0, ii=0, num_val=100, download=True):
         super(RegDB, self).__init__(root, split_id=split_id)
-        
+        self.ii = ii
         if download:
             self.download()
 
@@ -26,10 +27,11 @@ class RegDB(Dataset):
         from glob import glob
         from zipfile import ZipFile
         # Format
-        index_train_RGB = open('./data/RegDB/train_visible.txt','r')
-        index_train_IR = open('./data/RegDB/train_thermal.txt','r')
-        index_test_RGB = open('./data/RegDB/test_visible.txt','r')
-        index_test_IR = open('./data/RegDB/test_thermal.txt','r')
+        index_train_RGB = open('./data/RegDB/idx/train_visible_{}.txt'.format(self.ii),'r')
+        index_train_IR = open('./data/RegDB/idx/train_thermal_{}.txt'.format(self.ii),'r')
+        index_test_RGB = open('./data/RegDB/idx/test_visible_{}.txt'.format(self.ii),'r')
+        index_test_IR = open('./data/RegDB/idx/test_thermal_{}.txt'.format(self.ii),'r')
+
 
         def loadIdx(index):
             Lines = index.readlines()
@@ -50,7 +52,9 @@ class RegDB(Dataset):
         def insertToMeta(index, cam, delta):
             for idx in index:
                 fname = osp.basename(idx[0])
+
                 pid = int(idx[1]) + delta
+
                 identities[pid][cam].append(fname)
 
         insertToMeta(index_train_RGB, 0, 0)
@@ -60,6 +64,7 @@ class RegDB(Dataset):
 
         # print (identities)
         trainval_pids = set()
+
         gallery_pids = set()
         query_pids = set()
         #print (type(train_id))
@@ -69,6 +74,7 @@ class RegDB(Dataset):
             trainval_pids.add(i)
             gallery_pids.add(i + 206)
             query_pids.add(i + 206)
+
         # print(train_val_)
         # print(trainval_pids)
         # Save meta information into a json file

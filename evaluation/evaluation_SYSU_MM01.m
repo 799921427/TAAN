@@ -71,6 +71,8 @@ for run_time=1:10
     % For X_..., each row is an observation
     [X_gallery, Y_gallery, Y_cam_gallery, X_probe, Y_probe, Y_cam_probe]=get_testing_set...
         (feature_cam, Y, rand_perm_cam, run_time, number_shot, gallery_cam_list, probe_cam_list, test_id, cam_id);
+    % disp(X_gallery)
+    % disp(X_probe)
     dist = model.test_fun(X_gallery,X_probe,model.para);
     cmc = get_cmc_multi_cam(Y_gallery,Y_cam_gallery,Y_probe,Y_cam_probe,dist);
     map = get_map_multi_cam(Y_gallery,Y_cam_gallery,Y_probe,Y_cam_probe,dist);

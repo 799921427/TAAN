@@ -5,7 +5,7 @@
 % In the mat files, feature{id}(i,:) is a row feature vector of the i-th image of id
 %feature_info.name = 'feat_deep_zero_padding_';
 %feature_info.dir = './feature';
-feature_info.dir = '/home/fan/cross_reid_new/';
+feature_info.dir = '../0.5_rgb_0.8_ir/';
 feature_info.name = '';
 result_dir = './result'; % directory for saving result
 
@@ -27,4 +27,17 @@ content = load('./data_split/rand_perm_cam.mat'); % fixed permutation of samples
 data_split.rand_perm_cam = content.rand_perm_cam;
 
 % evaluation
+disp('all-search_single_shot')
+performance = evaluation_SYSU_MM01(feature_info, data_split, model, setting, result_dir);
+disp('all-search_multi_shot')
+setting.mode = 'all_search';
+setting.number_shot = 10;
+performance = evaluation_SYSU_MM01(feature_info, data_split, model, setting, result_dir);
+disp('indoor_search_single_shot')
+setting.mode = 'indoor_search';
+setting.number_shot = 1;
+performance = evaluation_SYSU_MM01(feature_info, data_split, model, setting, result_dir);
+disp('indoor_search_multi_shot')
+setting.mode = 'indoor_search';
+setting.number_shot = 10;
 performance = evaluation_SYSU_MM01(feature_info, data_split, model, setting, result_dir);
